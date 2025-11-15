@@ -1,5 +1,7 @@
 import argparse
 import sys
+import requests
+import toml
 
 
 def positive_int(value):
@@ -7,6 +9,28 @@ def positive_int(value):
     if ivalue <= 0:
         raise argparse.ArgumentTypeError(f"{value} is not a positive integer")
     return ivalue
+
+
+def get_direct_dependencies(url):
+    if 'github.com' in url and '/blob/' in url:
+        url = url.replace('github.com', 'raw.githubusercontent.com').replace('/blob/', '/')
+
+    response = requests.get(url)
+    response.raise_for_status()
+
+    data = toml.loads(response.text)
+    direct_deps = set()
+    direct_deps.update(data.get('dependencies', {}).keys())
+    direct_deps.update(data.get('dev-dependencies', {}).keys())
+    direct_deps.update(data.get('build-dependencies', {}).keys())
+    workspace = data.get('workspace', {})
+    direct_deps.update(workspace.get('dependencies', {}).keys())
+    direct_deps.update(workspace.get('dev-dependencies', {}).keys())
+    result = ["dependencies:"]
+    for name in sorted(direct_deps):
+        result.append(f"  {name}")
+
+    return "\n".join(result)
 
 
 def main():
@@ -56,14 +80,9 @@ def main():
     if not args.test_mode and not args.repo:
         parser.error("--repo is required when not using test mode")
 
-    # Вывод всех параметров
-    print("Configured parameters:")
-    print(f"  Package: {args.package}")
-    print(f"  Repository: {args.repo}")
-    print(f"  Test mode: {args.test_mode}")
-    print(f"  Output file: {args.output}")
-    print(f"  Max depth: {args.max_depth}")
-    print(f"  Filter: {args.filter}")
+    print(get_direct_dependencies(args.repo))
+
+
 
 
 if __name__ == "__main__":
