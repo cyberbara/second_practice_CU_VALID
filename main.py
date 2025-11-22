@@ -344,7 +344,6 @@ def _print_tree_recursive_test_console(
         graph: Dict[str, Set[str]],
         node: str,
         max_depth: int,
-        filter_str: str,
         current_depth: int,
         prefix: str,
         path: Set[str],
@@ -383,7 +382,6 @@ def _print_tree_recursive_test_console(
             graph=graph,
             node=dep,
             max_depth=max_depth,
-            filter_str=filter_str,
             current_depth=current_depth + 1,
             prefix=parent_prefix + connector,
             path=new_path,
@@ -477,6 +475,7 @@ def main():
         default="",
         help="Substring to filter out packages (case-sensitive)"
     )
+
 
     args = parser.parse_args()
 
