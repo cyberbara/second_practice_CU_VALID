@@ -1,0 +1,26 @@
+@startuml
+hide empty description
+skinparam packageStyle rectangle
+left to right direction
+
+package "proc-macro2" as proc_macro2
+package "quote" as quote
+package "serde" as serde #ADD1B2
+package "serde_core" as serde_core
+package "serde_derive" as serde_derive
+package "syn" as syn
+package "unicode-ident" as unicode_ident
+
+proc_macro2 --> unicode_ident
+quote --> proc_macro2
+serde --> serde_core
+serde --> serde_derive
+serde_core --> serde_derive
+serde_derive --> proc_macro2
+serde_derive --> quote
+serde_derive --> syn
+syn --> proc_macro2
+syn --> quote
+syn --> unicode_ident
+
+@enduml

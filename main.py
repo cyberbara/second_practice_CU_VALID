@@ -1,9 +1,11 @@
 import argparse
 import sys
 import requests
-from typing import Set, Dict, Optional, List
+from typing import Set, Dict, Optional, List, Tuple
 from functools import lru_cache
 import json
+import urllib.parse
+import os
 
 CRATES_IO_API_BASE = "https://crates.io/api/v1"
 
@@ -13,6 +15,7 @@ def positive_int(value):
     if ivalue <= 0:
         raise argparse.ArgumentTypeError(f"{value} is not a positive integer")
     return ivalue
+
 
 
 @lru_cache(maxsize=None)
@@ -49,8 +52,6 @@ def get_dependencies_from_api(crate_name: str) -> Optional[List[str]]:
     except requests.exceptions.HTTPError as e:
         if e.response.status_code == 404:
             print(f"[-] Error: Crate '{crate_name}' not found on crates.io.", file=sys.stderr)
-        else:
-            print(f"[-] HTTP Error fetching dependencies for {crate_name}: {e}", file=sys.stderr)
         return None
     except requests.exceptions.RequestException as e:
         print(f"[-] Network Error fetching dependencies for {crate_name}: {e}", file=sys.stderr)
@@ -60,7 +61,157 @@ def get_dependencies_from_api(crate_name: str) -> Optional[List[str]]:
         return None
 
 
-def _print_tree_recursive_api(
+def _build_plantuml_recursive_api(
+        root_name: str,
+        max_depth: int,
+        filter_str: str,
+        current_depth: int,
+        path: Set[str],
+        result_set: Set[Tuple[str, str]]
+) -> None:
+
+    if filter_str and filter_str in root_name:
+        return
+
+    if current_depth >= max_depth:
+        return
+
+    if root_name in path:
+        return
+
+    dependencies = get_dependencies_from_api(root_name)
+
+    if not dependencies:
+        return
+
+    new_path = path.copy()
+    new_path.add(root_name)
+
+    for dep in dependencies:
+        if filter_str and filter_str in dep:
+            continue
+
+        result_set.add((root_name, dep))
+
+        _build_plantuml_recursive_api(
+            root_name=dep,
+            max_depth=max_depth,
+            filter_str=filter_str,
+            current_depth=current_depth + 1,
+            path=new_path,
+            result_set=result_set
+        )
+
+
+def _build_plantuml_recursive_test(
+        graph: Dict[str, Set[str]],
+        node: str,
+        max_depth: int,
+        filter_str: str,
+        current_depth: int,
+        path: Set[str],
+        result_set: Set[Tuple[str, str]]
+) -> None:
+
+    if filter_str and filter_str in node:
+        return
+
+    if current_depth >= max_depth:
+        return
+
+    if node in path:
+        return
+
+    dependencies = sorted(list(graph.get(node, set())))
+
+    if not dependencies:
+        return
+
+    new_path = path.copy()
+    new_path.add(node)
+
+    for dep in dependencies:
+        if filter_str and filter_str in dep:
+            continue
+
+        result_set.add((node, dep))
+
+        _build_plantuml_recursive_test(
+            graph=graph,
+            node=dep,
+            max_depth=max_depth,
+            filter_str=filter_str,
+            current_depth=current_depth + 1,
+            path=new_path,
+            result_set=result_set
+        )
+
+
+def generate_plantuml_code(root_package: str, edges: Set[Tuple[str, str]]) -> str:
+    nodes = set()
+    for source, target in edges:
+        nodes.add(source)
+        nodes.add(target)
+
+    uml_lines = [
+        "@startuml",
+        "hide empty description",
+        "skinparam packageStyle rectangle",
+        "left to right direction",
+        ""
+    ]
+
+    for node in sorted(list(nodes)):
+        alias = node.replace("-", "_").replace(".", "_")
+        style = " #ADD1B2" if node == root_package else ""
+
+        uml_lines.append(f'package "{node}" as {alias}{style}')
+
+    uml_lines.append("")
+
+    # 2. Определние связей (используем алиасы)
+    for source, target in sorted(list(edges)):
+        source_id = source.replace("-", "_").replace(".", "_")
+        target_id = target.replace("-", "_").replace(".", "_")
+        uml_lines.append(f'{source_id} --> {target_id}')
+
+    uml_lines.append("")
+    uml_lines.append("@enduml")
+
+    return "\n".join(uml_lines)
+
+
+def print_plantuml_info(uml_code: str, output_filename: str):
+
+    print("\n" + "=" * 50)
+    print("✅ PlantUML Граф зависимостей (для визуализации)")
+    print("=" * 50)
+
+    print("\n1. ТЕКСТОВОЕ ПРЕДСТАВЛЕНИЕ:")
+    print("```plantuml")
+    print(uml_code)
+    print("```")
+
+    plantuml_url_base = "http://www.plantuml.com/plantuml/uml/"
+
+    print(f"\n2. ОНЛАЙН-ВИЗУАЛИЗАЦИЯ:")
+    print("   Сайт для генерации PNG/SVG (скопируйте код выше): **https://www.plantuml.com/plantuml/uml/start**")
+
+    output_puml_filename = f"{output_filename}.puml"
+    print(f"\n3. СОХРАНЕНИЕ ГРАФА:")
+    print(f"   Файл PlantUML сохранен как: **{output_puml_filename}**")
+
+    try:
+        with open(output_puml_filename, "w", encoding="utf-8") as f:
+            f.write(uml_code)
+        print("   Для генерации PNG локально: `java -jar plantuml.jar {}`".format(output_puml_filename))
+    except Exception as e:
+        print(f"[-] Ошибка при сохранении файла .puml: {e}")
+
+
+
+
+def _print_tree_recursive_api_console(
         root_name: str,
         max_depth: int,
         filter_str: str,
@@ -92,13 +243,15 @@ def _print_tree_recursive_api(
     new_path = path.copy()
     new_path.add(root_name)
 
-    for i, dep in enumerate(dependencies):
-        is_last = (i == len(dependencies) - 1)
+    filtered_deps = [dep for dep in dependencies if filter_str not in dep]
+
+    for i, dep in enumerate(filtered_deps):
+        is_last = (i == len(filtered_deps) - 1)
 
         connector = "└── " if is_last else "├── "
         new_parent_prefix = "    " if is_last else "│   "
 
-        _print_tree_recursive_api(
+        _print_tree_recursive_api_console(
             root_name=dep,
             max_depth=max_depth,
             filter_str=filter_str,
@@ -114,25 +267,44 @@ def run_real_mode(args: argparse.Namespace):
     print(f"[*] Analyzing package: {args.package}")
     print(f"[*] Max depth: {args.max_depth}")
     if args.filter:
-        print(f"[*] Filtering out packages containing: {args.filter}")
+        print(f"[*] Filtering out packages containing: '{args.filter}'")
     print("-" * 30)
 
-    initial_deps = get_dependencies_from_api(args.package)
 
-    print(args.package)
+    edges: Set[Tuple[str, str]] = set()
+    _build_plantuml_recursive_api(
+        root_name=args.package,
+        max_depth=args.max_depth + 1,
+        filter_str=args.filter,
+        current_depth=0,
+        path=set(),
+        result_set=edges
+    )
+
+    if not edges:
+        print(f"No dependencies found for '{args.package}' within depth {args.max_depth} (or all filtered out).")
+        return
+
+    uml_code = generate_plantuml_code(args.package, edges)
+    output_filename = args.output.replace(".png", "")
+
+    print_plantuml_info(uml_code, output_filename)
+
+    initial_deps = get_dependencies_from_api(args.package)
 
     if not initial_deps:
         return
 
+    filtered_deps = [dep for dep in initial_deps if args.filter not in dep]
     path = {args.package}
 
-    for i, dep_name in enumerate(initial_deps):
-        is_last = (i == len(initial_deps) - 1)
+    for i, dep_name in enumerate(filtered_deps):
+        is_last = (i == len(filtered_deps) - 1)
 
         connector = "└── " if is_last else "├── "
         parent_prefix = "    " if is_last else "│   "
 
-        _print_tree_recursive_api(
+        _print_tree_recursive_api_console(
             root_name=dep_name,
             max_depth=args.max_depth,
             filter_str=args.filter,
@@ -141,6 +313,8 @@ def run_real_mode(args: argparse.Namespace):
             path=path.copy(),
             parent_prefix=parent_prefix
         )
+
+
 
 
 def load_test_graph(filepath: str) -> Dict[str, Set[str]]:
@@ -166,7 +340,7 @@ def load_test_graph(filepath: str) -> Dict[str, Set[str]]:
     return graph
 
 
-def _print_tree_recursive(
+def _print_tree_recursive_test_console(
         graph: Dict[str, Set[str]],
         node: str,
         max_depth: int,
@@ -192,19 +366,20 @@ def _print_tree_recursive(
     print()
 
     dependencies = sorted(list(graph.get(node, set())))
-    if not dependencies:
+    filtered_deps = [dep for dep in dependencies if filter_str not in dep]
+    if not filtered_deps:
         return
 
     new_path = path.copy()
     new_path.add(node)
 
-    for i, dep in enumerate(dependencies):
-        is_last = (i == len(dependencies) - 1)
+    for i, dep in enumerate(filtered_deps):
+        is_last = (i == len(filtered_deps) - 1)
 
         connector = "└── " if is_last else "├── "
         new_parent_prefix = "    " if is_last else "│   "
 
-        _print_tree_recursive(
+        _print_tree_recursive_test_console(
             graph=graph,
             node=dep,
             max_depth=max_depth,
@@ -222,7 +397,7 @@ def run_test_mode(args: argparse.Namespace):
     print(f"[*] Analyzing package: {args.package}")
     print(f"[*] Max depth: {args.max_depth}")
     if args.filter:
-        print(f"[*] Filtering out packages containing: {args.filter}")
+        print(f"[*] Filtering out packages containing: '{args.filter}'")
     print("-" * 30)
 
     graph = load_test_graph(args.repo)
@@ -231,28 +406,27 @@ def run_test_mode(args: argparse.Namespace):
         print(f"Error: Root package '{args.package}' not found in the graph file.", file=sys.stderr)
         return
 
-    print(args.package)
 
-    direct_deps = sorted(list(graph.get(args.package, set())))
+    edges: Set[Tuple[str, str]] = set()
+    _build_plantuml_recursive_test(
+        graph=graph,
+        node=args.package,
+        max_depth=args.max_depth + 1,
+        filter_str=args.filter,
+        current_depth=0,
+        path=set(),
+        result_set=edges
+    )
 
-    path = {args.package}
 
-    for i, dep_name in enumerate(direct_deps):
-        is_last = (i == len(direct_deps) - 1)
+    if not edges:
+        print(f"No dependencies found for '{args.package}' within depth {args.max_depth} (or all filtered out).")
+        return
 
-        connector = "└── " if is_last else "├── "
-        parent_prefix = "    " if is_last else "│   "
+    uml_code = generate_plantuml_code(args.package, edges)
+    output_filename = args.output.replace(".png", "")
 
-        _print_tree_recursive(
-            graph=graph,
-            node=dep_name,
-            max_depth=args.max_depth,
-            filter_str=args.filter,
-            current_depth=1,
-            prefix=connector,
-            path=path.copy(),
-            parent_prefix=parent_prefix
-        )
+    print_plantuml_info(uml_code, output_filename)
 
 
 def main():
@@ -284,8 +458,8 @@ def main():
         "--output",
         "-o",
         type=str,
-        default="graph.png",
-        help="(Not used in this text-based version)"
+        default="graph",  # Имя файла по умолчанию
+        help="Base filename for saving the PlantUML definition (e.g., 'my_graph' generates 'my_graph.puml')"
     )
 
     parser.add_argument(
