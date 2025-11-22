@@ -1,0 +1,24 @@
+@startuml
+hide empty description
+skinparam packageStyle rectangle
+left to right direction
+
+package "A" as A #ADD1B2
+package "B" as B
+package "C" as C
+package "E" as E
+package "F" as F
+package "G" as G
+package "H" as H
+
+A --> B
+A --> C
+B --> C
+B --> E
+C --> E
+E --> B
+E --> F
+E --> G
+G --> H
+
+@enduml
